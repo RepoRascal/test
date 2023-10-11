@@ -1,5 +1,6 @@
 import requests
 from urllib.parse import urlparse
+import concurrent.futures
 
 # Extract domain from a URL
 def extract_domain(url):
@@ -11,8 +12,8 @@ def get_subdomains_from_crtsh(domain):
         response = requests.get(f"https://crt.sh/?q=%.{domain}&output=json")
         if response.status_code == 200:
             json_data = response.json()
-            # Extract name_value (subdomain) from each certificate
-            return [item['name_value'] for item in json_data]
+            # Extract name_value (subdomain) from each certificate and filter wildcard entries
+            return [item['name_value'] for item in json_data if '*' in item['name_value']]
         return []
     except requests.RequestException:
         return []
@@ -25,11 +26,12 @@ def main():
     domains = [extract_domain(url.strip()) for url in urls]
     wildcard_subdomains = []
 
-    for domain in domains:
-        subdomains = get_subdomains_from_crtsh(domain)
-        # Filter subdomains that have wildcards
-        wildcard_entries = [sub for sub in subdomains if '*' in sub]
-        wildcard_subdomains.extend(wildcard_entries)
+    # Using ThreadPoolExecutor to speed up fetching subdomains
+    with concurrent.futures.ThreadPoolExecutor(max_workers=100) as executor:
+        future_to_domain = {executor.submit(get_subdomains_from_crtsh, domain): domain for domain in domains}
+        for future in concurrent.futures.as_completed(future_to_domain):
+            wildcard_entries = future.result()
+            wildcard_subdomains.extend(wildcard_entries)
 
     # Save wildcard subdomains to an output file
     with open('wildcard_subdomains.txt', 'w') as out_file:
